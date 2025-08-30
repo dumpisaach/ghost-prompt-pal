@@ -92,7 +92,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
       });
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        
+        if (response.status === 429 && errorData.error?.code === 'insufficient_quota') {
+          throw new Error('Your OpenAI account has exceeded its quota. Please check your billing details at platform.openai.com');
+        } else if (response.status === 401) {
+          throw new Error('Invalid API key. Please check your OpenAI API key.');
+        } else if (response.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+        } else {
+          throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        }
       }
 
       const data = await response.json();
@@ -101,7 +111,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
       addMessage(assistantMessage, 'assistant');
     } catch (error) {
       console.error('OpenAI API Error:', error);
-      addMessage('Sorry, there was an error connecting to OpenAI. Please check your API key and try again.', 'assistant');
+      addMessage(`Error: ${error.message}`, 'assistant');
     } finally {
       setIsLoading(false);
     }
