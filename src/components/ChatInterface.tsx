@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Key, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -20,8 +20,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [apiKey, setApiKey] = useState<string>('');
+  const [tempApiKey, setTempApiKey] = useState<string>('');
+  const [showApiKeySetup, setShowApiKeySetup] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Load API key from localStorage on mount
+  useEffect(() => {
+    const savedApiKey = localStorage.getItem('openai-api-key');
+    if (savedApiKey) {
+      setApiKey(savedApiKey);
+    } else {
+      setShowApiKeySetup(true);
+    }
+  }, []);
+
+  const handleApiKeySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tempApiKey.trim()) return;
+    
+    localStorage.setItem('openai-api-key', tempApiKey);
+    setApiKey(tempApiKey);
+    setShowApiKeySetup(false);
+    setTempApiKey('');
+  };
+
+  const handleChangeApiKey = () => {
+    setShowApiKeySetup(true);
+    setTempApiKey(apiKey);
+  };
 
   const addMessage = (content: string, role: 'user' | 'assistant') => {
     const newMessage: Message = {
@@ -35,21 +63,48 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !apiKey) return;
 
     const userMessage = input.trim();
     setInput('');
     addMessage(userMessage, 'user');
     setIsLoading(true);
 
-    // Simulate ChatGPT response (replace with actual API call)
-    setTimeout(() => {
-      addMessage(
-        `I received your message: "${userMessage}". This is a demo response. To connect to ChatGPT, you'll need to integrate with OpenAI's API when you wrap this in Electron.`,
-        'assistant'
-      );
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            ...messages.map(msg => ({
+              role: msg.role,
+              content: msg.content
+            })),
+            { role: 'user', content: userMessage }
+          ],
+          max_tokens: 1000,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const assistantMessage = data.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+      
+      addMessage(assistantMessage, 'assistant');
+    } catch (error) {
+      console.error('OpenAI API Error:', error);
+      addMessage('Sorry, there was an error connecting to OpenAI. Please check your API key and try again.', 'assistant');
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   useEffect(() => {
@@ -63,20 +118,79 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
     inputRef.current?.focus();
   }, []);
 
+  // Show API key setup if no API key is stored
+  if (showApiKeySetup) {
+    return (
+      <div 
+        className="flex flex-col h-full bg-gradient-glass backdrop-blur-xl border border-white/10 rounded-lg overflow-hidden"
+        style={{ opacity }}
+      >
+        <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+          <Key className="w-16 h-16 text-primary mb-6 animate-float" />
+          <h2 className="text-2xl font-semibold text-foreground mb-4">OpenAI API Key Required</h2>
+          <p className="text-muted-foreground mb-8 max-w-md">
+            Enter your OpenAI API key to start chatting. Your key will be stored locally and never shared.
+          </p>
+          
+          <form onSubmit={handleApiKeySubmit} className="w-full max-w-md space-y-4">
+            <Input
+              type="password"
+              value={tempApiKey}
+              onChange={(e) => setTempApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="w-full bg-input border-white/20 focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+              autoFocus
+            />
+            <Button
+              type="submit"
+              disabled={!tempApiKey.trim()}
+              className="w-full bg-gradient-primary hover:scale-105 transition-transform"
+            >
+              <Key className="w-4 h-4 mr-2" />
+              Save API Key
+            </Button>
+          </form>
+          
+          <p className="text-xs text-muted-foreground mt-6 max-w-md">
+            Get your API key from{' '}
+            <a 
+              href="https://platform.openai.com/api-keys" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              platform.openai.com
+            </a>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div 
       className="flex flex-col h-full bg-gradient-glass backdrop-blur-xl border border-white/10 rounded-lg overflow-hidden"
       style={{ opacity }}
     >
       {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b border-white/10 bg-card/50">
-        <div className="w-8 h-8 rounded-full bg-gradient-primary flex items-center justify-center animate-pulse-glow">
-          <Bot className="w-4 h-4 text-primary-foreground" />
+      <div className="flex items-center justify-between p-4 border-b border-white/10 bg-card/50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-gradient-primary flex items-center justify-center animate-pulse-glow">
+            <Bot className="w-4 h-4 text-primary-foreground" />
+          </div>
+          <div>
+            <h1 className="font-semibold text-foreground">AI Assistant</h1>
+            <p className="text-xs text-muted-foreground">Ready for screen sharing overlay</p>
+          </div>
         </div>
-        <div>
-          <h1 className="font-semibold text-foreground">AI Assistant</h1>
-          <p className="text-xs text-muted-foreground">Ready for screen sharing overlay</p>
-        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleChangeApiKey}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Settings className="w-4 h-4" />
+        </Button>
       </div>
 
       {/* Messages */}
