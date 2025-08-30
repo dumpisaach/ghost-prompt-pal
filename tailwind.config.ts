@@ -18,6 +18,32 @@ export default {
 			}
 		},
 		extend: {
+			backdropBlur: {
+				xs: '2px',
+			},
+			backgroundImage: {
+				'gradient-primary': 'var(--gradient-primary)',
+				'gradient-glass': 'var(--gradient-glass)',
+			},
+			animation: {
+				'float': 'float 3s ease-in-out infinite',
+				'pulse-glow': 'pulse-glow 2s ease-in-out infinite alternate',
+				'slide-up': 'slide-up 0.3s ease-out',
+			},
+			keyframes: {
+				float: {
+					'0%, 100%': { transform: 'translateY(0px)' },
+					'50%': { transform: 'translateY(-10px)' },
+				},
+				'pulse-glow': {
+					'0%': { boxShadow: '0 0 20px hsl(var(--ai-glow) / 0.3)' },
+					'100%': { boxShadow: '0 0 40px hsl(var(--ai-glow) / 0.6)' },
+				},
+				'slide-up': {
+					'from': { transform: 'translateY(10px)', opacity: '0' },
+					'to': { transform: 'translateY(0)', opacity: '1' },
+				},
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
