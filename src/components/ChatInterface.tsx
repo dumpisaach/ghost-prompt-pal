@@ -3,6 +3,7 @@ import { Send, Bot, User, Key, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 interface Message {
@@ -10,6 +11,15 @@ interface Message {
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
+}
+
+type AIProvider = 'openai' | 'gemini';
+
+interface ProviderConfig {
+  name: string;
+  apiUrl: string;
+  defaultModel: string;
+  keyPrefix: string;
 }
 
 interface ChatInterfaceProps {
@@ -23,12 +33,33 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
   const [apiKey, setApiKey] = useState<string>('');
   const [tempApiKey, setTempApiKey] = useState<string>('');
   const [showApiKeySetup, setShowApiKeySetup] = useState(false);
+  const [provider, setProvider] = useState<AIProvider>('openai');
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load API key from localStorage on mount
+  const providers: Record<AIProvider, ProviderConfig> = {
+    openai: {
+      name: 'OpenAI',
+      apiUrl: 'https://api.openai.com/v1/chat/completions',
+      defaultModel: 'gpt-3.5-turbo',
+      keyPrefix: 'sk-'
+    },
+    gemini: {
+      name: 'Google Gemini',
+      apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent',
+      defaultModel: 'gemini-1.5-flash-latest',
+      keyPrefix: 'AI'
+    }
+  };
+
+  // Load API key and provider from localStorage on mount
   useEffect(() => {
-    const savedApiKey = localStorage.getItem('openai-api-key');
+    const savedProvider = localStorage.getItem('ai-provider') as AIProvider;
+    if (savedProvider && providers[savedProvider]) {
+      setProvider(savedProvider);
+    }
+    
+    const savedApiKey = localStorage.getItem(`${savedProvider || 'openai'}-api-key`);
     if (savedApiKey) {
       setApiKey(savedApiKey);
     } else {
@@ -40,7 +71,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
     e.preventDefault();
     if (!tempApiKey.trim()) return;
     
-    localStorage.setItem('openai-api-key', tempApiKey);
+    localStorage.setItem(`${provider}-api-key`, tempApiKey);
+    localStorage.setItem('ai-provider', provider);
     setApiKey(tempApiKey);
     setShowApiKeySetup(false);
     setTempApiKey('');
@@ -49,6 +81,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
   const handleChangeApiKey = () => {
     setShowApiKeySetup(true);
     setTempApiKey(apiKey);
+  };
+
+  const handleProviderChange = (newProvider: AIProvider) => {
+    setProvider(newProvider);
+    const savedApiKey = localStorage.getItem(`${newProvider}-api-key`);
+    if (savedApiKey) {
+      setApiKey(savedApiKey);
+      setTempApiKey(savedApiKey);
+    } else {
+      setApiKey('');
+      setTempApiKey('');
+    }
   };
 
   const addMessage = (content: string, role: 'user' | 'assistant') => {
@@ -71,46 +115,85 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
     setIsLoading(true);
 
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            ...messages.map(msg => ({
-              role: msg.role,
-              content: msg.content
-            })),
-            { role: 'user', content: userMessage }
-          ],
-          max_tokens: 1000,
-          temperature: 0.7,
-        }),
-      });
+      let response;
+      const config = providers[provider];
+
+      if (provider === 'openai') {
+        response = await fetch(config.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: config.defaultModel,
+            messages: [
+              ...messages.map(msg => ({
+                role: msg.role,
+                content: msg.content
+              })),
+              { role: 'user', content: userMessage }
+            ],
+            max_tokens: 1000,
+            temperature: 0.7,
+          }),
+        });
+      } else if (provider === 'gemini') {
+        response = await fetch(`${config.apiUrl}?key=${apiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: userMessage }]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 1000,
+            }
+          }),
+        });
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         
-        if (response.status === 429 && errorData.error?.code === 'insufficient_quota') {
-          throw new Error('Your OpenAI account has exceeded its quota. Please check your billing details at platform.openai.com');
-        } else if (response.status === 401) {
-          throw new Error('Invalid API key. Please check your OpenAI API key.');
-        } else if (response.status === 429) {
-          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
-        } else {
-          throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        if (provider === 'openai') {
+          if (response.status === 429 && errorData.error?.code === 'insufficient_quota') {
+            throw new Error('Your OpenAI account has exceeded its quota. Please check your billing details at platform.openai.com');
+          } else if (response.status === 401) {
+            throw new Error('Invalid OpenAI API key. Please check your API key.');
+          } else if (response.status === 429) {
+            throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+          } else {
+            throw new Error(`OpenAI API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+          }
+        } else if (provider === 'gemini') {
+          if (response.status === 401 || response.status === 403) {
+            throw new Error('Invalid Gemini API key. Please check your API key.');
+          } else if (response.status === 429) {
+            throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+          } else {
+            throw new Error(`Gemini API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+          }
         }
       }
 
       const data = await response.json();
-      const assistantMessage = data.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+      let assistantMessage = '';
+
+      if (provider === 'openai') {
+        assistantMessage = data.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+      } else if (provider === 'gemini') {
+        assistantMessage = data.candidates[0]?.content?.parts[0]?.text || 'Sorry, I could not generate a response.';
+      }
       
       addMessage(assistantMessage, 'assistant');
     } catch (error) {
-      console.error('OpenAI API Error:', error);
+      console.error(`${provider.toUpperCase()} API Error:`, error);
       addMessage(`Error: ${error.message}`, 'assistant');
     } finally {
       setIsLoading(false);
@@ -137,20 +220,37 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
       >
         <div className="flex flex-col items-center justify-center h-full p-8 text-center">
           <Key className="w-16 h-16 text-primary mb-6 animate-float" />
-          <h2 className="text-2xl font-semibold text-foreground mb-4">OpenAI API Key Required</h2>
+          <h2 className="text-2xl font-semibold text-foreground mb-4">AI Provider Setup</h2>
           <p className="text-muted-foreground mb-8 max-w-md">
-            Enter your OpenAI API key to start chatting. Your key will be stored locally and never shared.
+            Choose your AI provider and enter your API key to start chatting. Your key will be stored locally and never shared.
           </p>
           
           <form onSubmit={handleApiKeySubmit} className="w-full max-w-md space-y-4">
-            <Input
-              type="password"
-              value={tempApiKey}
-              onChange={(e) => setTempApiKey(e.target.value)}
-              placeholder="sk-..."
-              className="w-full bg-input border-white/20 focus:border-primary focus:ring-1 focus:ring-primary transition-all"
-              autoFocus
-            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">AI Provider</label>
+              <Select value={provider} onValueChange={handleProviderChange}>
+                <SelectTrigger className="w-full bg-input border-white/20 focus:border-primary">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai">OpenAI (GPT)</SelectItem>
+                  <SelectItem value="gemini">Google Gemini</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">API Key</label>
+              <Input
+                type="password"
+                value={tempApiKey}
+                onChange={(e) => setTempApiKey(e.target.value)}
+                placeholder={providers[provider].keyPrefix + "..."}
+                className="w-full bg-input border-white/20 focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+                autoFocus
+              />
+            </div>
+            
             <Button
               type="submit"
               disabled={!tempApiKey.trim()}
@@ -163,14 +263,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
           
           <p className="text-xs text-muted-foreground mt-6 max-w-md">
             Get your API key from{' '}
-            <a 
-              href="https://platform.openai.com/api-keys" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              platform.openai.com
-            </a>
+            {provider === 'openai' ? (
+              <a 
+                href="https://platform.openai.com/api-keys" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                platform.openai.com
+              </a>
+            ) : (
+              <a 
+                href="https://aistudio.google.com/app/apikey" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                Google AI Studio
+              </a>
+            )}
           </p>
         </div>
       </div>
@@ -189,7 +300,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ opacity }) => {
             <Bot className="w-4 h-4 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="font-semibold text-foreground">AI Assistant</h1>
+            <h1 className="font-semibold text-foreground">{providers[provider].name} Assistant</h1>
             <p className="text-xs text-muted-foreground">Ready for screen sharing overlay</p>
           </div>
         </div>
